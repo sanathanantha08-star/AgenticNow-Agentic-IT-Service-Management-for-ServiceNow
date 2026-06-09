@@ -6,9 +6,11 @@
 
 ## Overview
 
-AgenticNow is a agentic AI system built on top of ServiceNow that automates the full IT ticket lifecycle — from intake to root cause analysis. It replaces the repetitive, manual middle layer of L1 IT support with a network of specialised agents that classify, deduplicate, resolve, route, monitor, and learn — while keeping humans in the loop at every consequential decision point.
+AgenticNow is an agentic AI system built on top of ServiceNow that automates the full IT ticket lifecycle — from intake to root cause analysis. It replaces the repetitive, manual middle layer of L1 IT support with a network of specialised agents that classify, deduplicate, resolve, route, monitor, and learn — while keeping humans in the loop at every consequential decision point.
 
 The system is built around a core principle: **the agent does the work, the human makes the call.** No ticket is closed, routed, published, or changed in production without explicit human confirmation. Every HITL gate is deliberate and purposeful — not a workaround, but a design decision.
+
+> **ServiceNow Instance Status:** A free Personal Developer Instance (PDI) is currently unavailable due to capacity constraints on developer.servicenow.com. A mock ServiceNow client (`integrations/mock_servicenow_client.py`) has been implemented as a full drop-in replacement, mirroring every method signature of the real client. Switching to a real instance requires only setting `API_ENV=production` in `.env` — no code changes needed anywhere. The system is actively waiting for a PDI to become available.
 
 ---
 
@@ -94,35 +96,39 @@ Five human checkpoints ensure no consequential action happens without sign-off:
 
 ## Phases of Development
 
-### Phase 1 — Project Scaffold & ServiceNow Connectivity
-**Goal: running skeleton, no agents yet**
+### ✅ Phase 1 — Project Scaffold & ServiceNow Connectivity
+**Status: Complete**
 
-- Set up full folder structure for all 7 agents
-- Write `MainState` in `main_graph.py` with just `ticket_id`, `is_duplicate`, `is_known_pattern`, `hitl_status`
-- Set up `.env`, `requirements.txt`, `langgraph.json`
-- Write `servicenow_client.py` with three methods: `get_ticket(ticket_id)`, `patch_ticket(ticket_id, fields)`, `get_work_notes(ticket_id)` — test all three against your PDI
-- Write a dummy `main_graph.py` that just passes `ticket_id` through one node and ends — verify it compiles and runs
-- Set up SqliteSaver checkpointer
+- Full folder structure created for all 7 agents
+- `MainState` defined in `main_graph.py`
+- `.env`, `requirements.txt`, `langgraph.json` configured
+- `servicenow_client.py` written with full Table API coverage
+- `mock_servicenow_client.py` built as a drop-in replacement — active when `API_ENV=development`
+- `integrations/__init__.py` handles client switching automatically based on `API_ENV`
+- `db/checkpoint.py` stubbed — returns `None` until Phase 5 (PostgreSQL checkpointer added when HITL gates require persistence)
+- `config.py` centralises all environment variables via `pydantic-settings`
+- Dummy `main_graph.py` compiles and runs end to end
 
-> **Done when:** you can create a ticket in ServiceNow PDI, call `get_ticket()` from Python, and get the data back.
-
----
-
-### Phase 2 — Triage Agent
-**Goal: first real LLM call, sets the pattern for every agent after this**
-
-- `state.py` — `ticket_id`, `raw_description`, `ticket_type`, `priority`, `affected_service`, `ci`, `is_known_pattern`
-- `tools.py` — `get_ticket` tool wrapping `servicenow_client`
-- `nodes.py` — `fetch_ticket_node`, `classify_node`, `write_classification_node`
-- `agent.py` — 3-node linear graph: fetch → classify → write
-- Wire into main graph as first node
-
-> **Done when:** ticket created in PDI → triage agent classifies it → classification written to Work Notes in ServiceNow.
+> **Note on ServiceNow:** PDI unavailable at time of development. Mock client mirrors the full `ServiceNowClient` API surface. Set `API_ENV=production` in `.env` to switch to the real instance when available — zero code changes required.
 
 ---
 
-### Phase 3 — Duplicate Detection Agent
-**Goal: first semantic search, establishes embedding pattern**
+### ✅ Phase 2 — Triage Agent
+**Status: Complete**
+
+- `state.py` — `TriageAgentState` with `ticket_id`, `short_description`, `description`, `ticket_type`, `priority`, `affected_service`, `config_item`, `category`, `classification_reason`, `is_known_pattern`, `pattern_name`, `classification_written`
+- `tools.py` — `get_ticket`, `write_classification` tools wrapping mock/real ServiceNow client
+- `nodes.py` — `fetch_ticket_node`, `classify_node`, `write_classification_node` using Cohere `command-r-plus` with structured output
+- `agent.py` — 3-node linear graph: fetch → classify → write, compiled without checkpointer
+- Wired into `main_graph.py` as first node; triage always flows to END (duplicate agent wired in Phase 3)
+- All 5 mock tickets classified correctly — type, priority, category, affected service, CI, known pattern detection all verified
+
+> **LLM:** Cohere `command-r-plus` used throughout (OpenAI substituted out). Structured output via `with_structured_output(ClassificationOutput)`.
+
+---
+
+### 🔲 Phase 3 — Duplicate Detection Agent
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `raw_description`, `is_duplicate`, `parent_ticket_id`, `similarity_score`
 - `tools.py` — `get_open_tickets` tool, `embed_text` tool, `similarity_search` tool
@@ -130,79 +136,65 @@ Five human checkpoints ensure no consequential action happens without sign-off:
 - `agent.py` — 4-node graph
 - Wire into main graph after triage, add conditional edge: duplicate → END, unique → continue
 
-> **Done when:** two near-identical tickets in PDI → agent detects duplicate, merges, posts in Work Notes, flow ends there.
-
 ---
 
-### Phase 4 — Context Package Agent
-**Goal: assembles everything a human needs before they see the ticket**
-
-Similar ticket detection lives here as a tool, not a separate agent.
+### 🔲 Phase 4 — Context Package Agent
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `classification`, `priority`, `similar_tickets`, `kb_match`, `sla_window`, `routing_suggestion`, `context_package`
-- `tools.py` — `similar_tickets_search` tool (semantic over resolved tickets), `kb_search` tool, `sla_calculator` tool
+- `tools.py` — `similar_tickets_search` tool, `kb_search` tool, `sla_calculator` tool
 - `nodes.py` — `fetch_classification_node`, `similar_tickets_node`, `kb_search_node`, `assemble_package_node`, `write_package_node`
 - `agent.py` — 5-node linear graph
 - Wire into main graph after duplicate check on the "no duplicate" branch
 
-> **Done when:** ticket flows through triage + dedup + context package → Work Notes contains a clean context package with similar tickets, KB match, and SLA window.
-
 ---
 
-### Phase 5 — Router Agent + HITL Gate 2
-**Goal: first LangGraph interrupt, most important technical milestone**
+### 🔲 Phase 5 — Router Agent + HITL Gate 2
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `context_package`, `assigned_team`, `routing_reasoning`, `hitl_status`
 - `tools.py` — `get_assignment_groups` tool, `assign_ticket` tool
 - `nodes.py` — `routing_decision_node`, `hitl_gate_node` (uses `interrupt()`), `apply_routing_node`, `re_triage_node`
 - `agent.py` — graph with interrupt at `hitl_gate_node`
 - Wire into main graph after context package
-
-> **Done when:** graph pauses at HITL, you can approve/reject via LangGraph Studio or API, approve routes ticket in PDI, reject loops back to triage correctly.
+- PostgreSQL checkpointer activated in `db/checkpoint.py` at this phase
 
 ---
 
-### Phase 6 — Resolver Agent + HITL Gate 1
-**Goal: known pattern branch, mock execution, second interrupt**
+### 🔲 Phase 6 — Resolver Agent + HITL Gate 1
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `is_known_pattern`, `resolution_steps`, `verification_status`, `close_suggestion`
 - `tools.py` — `kb_pattern_match` tool, `mock_execute_fix` tool, `mock_verify_fix` tool, `set_pending_closure` tool
 - `nodes.py` — `pattern_check_node`, `execute_fix_node`, `verify_fix_node`, `suggest_close_node`, `hitl_close_confirm_node` (interrupt)
 - `agent.py` — graph with fork: pattern found → execute → verify → HITL, no pattern → exit to main path
-- Wire into main graph: triage `is_known_pattern: true` → resolver, `false` → duplicate
-
-> **Done when:** "password reset" ticket → agent detects pattern → mock fix executed → Work Notes says "ready to close" → graph pauses → L1 confirms → ticket moves to Pending Closure in PDI.
 
 ---
 
-### Phase 7 — Resolution Notes Agent + HITL Gate 3
-**Goal: shared agent reused by both resolver path and main path, triggered by Resolved state**
+### 🔲 Phase 7 — Resolution Notes Agent + HITL Gate 3
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `work_notes_thread`, `resolution_summary`, `notes_approved`
 - `tools.py` — `get_work_notes` tool, `write_resolution_notes` tool
 - `nodes.py` — `fetch_notes_node`, `draft_summary_node`, `hitl_approval_node` (interrupt), `write_notes_node`
 - `agent.py` — 4-node graph with one interrupt
-- Wire into main graph: called after specialist resolves (Resolved state) AND after resolver agent HITL confirms close — same subgraph invoked from both branches
-
-> **Done when:** resolve any ticket manually in PDI → agent drafts resolution summary → graph pauses → you approve → summary saved to ticket resolution notes field.
+- Shared agent — invoked from both resolver path and main path on Resolved state change
 
 ---
 
-### Phase 8 — RCA Agent + HITL Gate 4
-**Goal: parallel branch, most complex agent, build last when you have real ticket data**
+### 🔲 Phase 8 — RCA Agent + HITL Gate 4
+**Status: Not started**
 
 - `state.py` — `ticket_id`, `ticket_cluster`, `problem_record_id`, `rca_hypotheses`, `confirmed_root_cause`, `workaround`, `linked_incident_ids`
 - `tools.py` — `cluster_scan` tool, `create_problem_record` tool, `get_linked_incidents` tool, `get_change_history` tool, `push_workaround` tool
 - `nodes.py` — `cluster_scan_node`, `threshold_check_node`, `create_problem_record_node`, `generate_hypotheses_node`, `hitl_rca_confirm_node` (interrupt), `push_workaround_node`
 - `agent.py` — graph with interrupt at RCA confirmation
-- Wire into main graph as parallel branch using LangGraph `Send` API, fires independently of individual ticket resolution
-
-> **Done when:** 5 similar tickets in PDI → clustering fires → Problem record created with all incidents linked → hypotheses generated → HITL pauses → coordinator confirms → workaround pushed to all linked incidents.
+- Wired as parallel branch using LangGraph `Send` API
 
 ---
 
-### Phase 9 — Main Graph Assembly & End-to-End Test
-**Goal: single entrypoint, full flow working**
+### 🔲 Phase 9 — Main Graph Assembly & End-to-End Test
+**Status: Not started**
 
 - Complete `main_graph.py` wiring all 7 agents as subgraphs
 - Add all conditional edges and routing logic
@@ -212,7 +204,34 @@ Similar ticket detection lives here as a tool, not a separate agent.
   - **Known pattern path:** password reset ticket → resolver → HITL close confirm → resolution notes → done
   - **RCA path:** 5 similar tickets → clustering fires → RCA HITL → workaround pushed → done
 
-> **Done when:** all three paths work end to end without manual intervention except at the designated HITL gates.
+---
+
+## Changelog
+
+### v0.2.0 — 2026-06-09
+**Phase 2 complete — Triage Agent**
+
+- Implemented `TriageAgentState` TypedDict with full classification schema
+- Built `get_ticket` and `write_classification` LangChain tools wrapping ServiceNow client
+- Implemented `fetch_ticket_node`, `classify_node`, `write_classification_node` using Cohere `command-r-plus` with structured output via `with_structured_output`
+- Replaced OpenAI with Cohere throughout — removed `langchain-openai` and `openai` from requirements, added `langchain-cohere`
+- Fixed priority normalisation — strips `P` prefix if LLM returns `P2` instead of `2`
+- Fixed category normalisation — maps non-standard values (e.g. `connectivity`) to allowed enum
+- Resolved `KeyError` on state merge — node return dicts now use exact `TriageAgentState` field names
+- Resolved `ValidationError` on tool invocation — `write_classification` tool parameters aligned to state field names
+- All 5 mock tickets verified: correct type, priority, category, service, CI, known pattern detection
+- `main_graph.py` wired with triage as first node, flows to END pending Phase 3
+
+### v0.1.0 — 2026-06-09
+**Phase 1 complete — Project Scaffold**
+
+- Initialised project structure for all 7 agents
+- Configured `.env`, `requirements.txt`, `langgraph.json`, `config.py`
+- Implemented `ServiceNowClient` with full Table API coverage (incidents, problems, KB, assignment groups)
+- Implemented `MockServiceNowClient` as drop-in replacement with 5 realistic test tickets and resolved ticket history
+- `integrations/__init__.py` auto-switches between mock and real client via `API_ENV` env var
+- `db/checkpoint.py` stubbed — activates PostgreSQL checkpointer in Phase 5
+- `main_graph.py` scaffolded with `MainState` and commented phase-by-phase build plan
 
 ---
 
@@ -225,67 +244,36 @@ agenticnow/
 ├── .env
 ├── requirements.txt
 ├── langgraph.json
+├── config.py
+├── test_triage.py
+├── test_main.py
 ├── my_agent/
 │   ├── __init__.py
 │   ├── main_graph.py
 │   ├── triage_agent/
 │   │   ├── __init__.py
 │   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   ├── state.py
+│   │   ├── nodes.py
+│   │   └── tools.py
 │   ├── duplicate_agent/
-│   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   └── __init__.py
 │   ├── context_package_agent/
-│   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   └── __init__.py
 │   ├── router_agent/
-│   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   └── __init__.py
 │   ├── resolver_agent/
-│   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   └── __init__.py
 │   ├── resolution_notes_agent/
-│   │   ├── __init__.py
-│   │   ├── agent.py
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       └── tools.py
+│   │   └── __init__.py
 │   └── rca_agent/
-│       ├── __init__.py
-│       ├── agent.py
-│       └── utils/
-│           ├── __init__.py
-│           ├── state.py
-│           ├── nodes.py
-│           └── tools.py
-└── integrations/
-    └── servicenow_client.py
+│       └── __init__.py
+├── integrations/
+│   ├── __init__.py
+│   ├── servicenow_client.py
+│   └── mock_servicenow_client.py
+└── db/
+    └── checkpoint.py
 ```
 
 ---
@@ -295,10 +283,10 @@ agenticnow/
 | Layer | Technology |
 |---|---|
 | Agent orchestration | LangGraph (StateGraph, multi-agent subgraphs) |
-| LLM | GPT-4o / Claude (via API) |
-| Platform | ServiceNow PDI (Personal Developer Instance) |
-| Backend | FastAPI |
+| LLM | Cohere `command-r-plus` (via `langchain-cohere`) |
+| Platform | ServiceNow PDI (pending availability) / Mock client (active) |
+| Backend | FastAPI (wired in Phase 9) |
 | Vector search | pgvector / Supabase |
-| Memory & state | LangGraph checkpointer (SqliteSaver) |
+| Memory & state | LangGraph checkpointer (PostgreSQL — activated Phase 5) |
 | Notifications | ServiceNow webhooks + email |
 | External integrations | Active Directory / Okta APIs (mocked for demo) |

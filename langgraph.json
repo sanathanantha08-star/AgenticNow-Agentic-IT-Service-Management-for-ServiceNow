@@ -1,0 +1,16 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "triage":           "./my_agent/triage_agent/agent.py:graph",
+    "duplicate":        "./my_agent/duplicate_agent/agent.py:graph",
+    "context_package":  "./my_agent/context_package_agent/agent.py:graph",
+    "router":           "./my_agent/router_agent/agent.py:graph",
+    "resolver":         "./my_agent/resolver_agent/agent.py:graph",
+    "resolution_notes": "./my_agent/resolution_notes_agent/agent.py:graph",
+    "rca":              "./my_agent/rca_agent/agent.py:graph",
+    "main":             "./my_agent/main_graph.py:graph"
+  },
+  "env": ".env",
+  "python_version": "3.11",
+  "pip_config_file": "requirements.txt"
+}
