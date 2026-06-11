@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # ── Cohere (LLM + embeddings) ─────────────────────────────
     cohere_api_key: str
-    cohere_model: str
+    cohere_model: str = "command-r-plus-08-2024"
 
     # ── PostgreSQL ────────────────────────────────────────────
     postgres_host: str
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     postgres_db: str
     postgres_user: str
     postgres_password: str
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db: str = "agenticnow"
 
     # ── FastAPI ───────────────────────────────────────────────
     api_host: str = "0.0.0.0"

@@ -63,20 +63,20 @@ class MockServiceNowClient:
                 "assignment_group": "",
                 "work_notes": ""
             },
-            "TICK005": {
-                "sys_id": "TICK005",
-                "short_description": "VPN keeps disconnecting",
-                "description": (
-                    "My VPN connection drops every 20-30 minutes. "
-                    "I have to reconnect manually each time. "
-                    "Error message says authentication timeout."
-                ),
-                "state": "1",
-                "priority": "3",
-                "category": "",
-                "assignment_group": "",
-                "work_notes": ""
-            },
+           "TICK005": {
+    "sys_id": "TICK005",
+    "short_description": "Unable to connect to VPN from home",
+    "description": (
+        "I cannot connect to the company VPN from my home network. "
+        "Getting error code 800 when trying to authenticate. "
+        "Cannot access any internal systems or files."
+    ),
+    "state": "1",
+    "priority": "3",
+    "category": "",
+    "assignment_group": "",
+    "work_notes": ""
+},
         }
         return tickets.get(ticket_id, tickets["TICK001"])
 
@@ -111,12 +111,12 @@ class MockServiceNowClient:
                 "priority": "3"
             },
             {
-                "sys_id": "TICK005",
-                "short_description": "VPN keeps disconnecting",
-                "description": "VPN drops every 20-30 minutes, auth timeout",
-                "category": "network",
-                "priority": "3"
-            },
+    "sys_id": "TICK005",
+    "short_description": "Unable to connect to VPN from home",
+    "description": "Cannot connect to VPN, error 800, no access to internal systems",
+    "category": "network",
+    "priority": "3"
+},
         ]
 
     def get_resolved_tickets(self, limit: int = 200) -> list:

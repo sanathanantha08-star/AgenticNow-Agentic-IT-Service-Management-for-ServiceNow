@@ -120,21 +120,29 @@ Five human checkpoints ensure no consequential action happens without sign-off:
 - `tools.py` — `get_ticket`, `write_classification` tools wrapping mock/real ServiceNow client
 - `nodes.py` — `fetch_ticket_node`, `classify_node`, `write_classification_node` using Cohere `command-r-plus` with structured output
 - `agent.py` — 3-node linear graph: fetch → classify → write, compiled without checkpointer
-- Wired into `main_graph.py` as first node; triage always flows to END (duplicate agent wired in Phase 3)
+- Wired into `main_graph.py` as first node; triage always flows to duplicate agent
 - All 5 mock tickets classified correctly — type, priority, category, affected service, CI, known pattern detection all verified
 
 > **LLM:** Cohere `command-r-plus` used throughout (OpenAI substituted out). Structured output via `with_structured_output(ClassificationOutput)`.
 
 ---
 
-### 🔲 Phase 3 — Duplicate Detection Agent
-**Status: Not started**
+### ✅ Phase 3 — Duplicate Detection Agent
+**Status: Complete**
 
-- `state.py` — `ticket_id`, `raw_description`, `is_duplicate`, `parent_ticket_id`, `similarity_score`
-- `tools.py` — `get_open_tickets` tool, `embed_text` tool, `similarity_search` tool
-- `nodes.py` — `fetch_ticket_node`, `embed_node`, `search_node`, `decision_node`
-- `agent.py` — 4-node graph
-- Wire into main graph after triage, add conditional edge: duplicate → END, unique → continue
+- `state.py` — `DuplicateAgentState` with `ticket_id`, `short_description`, `description`, `ticket_embedding`, `candidate_tickets`, `is_duplicate`, `duplicate_of`, `similarity_score`, `duplicate_list`, `duplicate_written`
+- `tools.py` — `get_ticket`, `embed_text`, `store_embeddings`, `similarity_search`, `write_duplicate_result` tools
+- `nodes.py` — `fetch_ticket_node`, `store_embeddings_node`, `embed_ticket_node`, `similarity_node`, `write_result_node`
+- `agent.py` — 5-node linear graph: fetch → store embeddings → embed ticket → similarity → write result
+- Local embedding model `all-MiniLM-L6-v2` via `sentence-transformers` — 384 dimensions, runs fully on device
+- MongoDB local instance used as vector store — embeddings stored in `ticket_embeddings` collection
+- Upsert strategy ensures fresh embeddings on every run — stale embeddings deleted before comparison
+- Self-match prevention — incoming ticket excluded from MongoDB store and similarity search via two-layer guard
+- Streaming enabled via `graph.stream()` — real-time node-by-node output during execution
+- Wired into `main_graph.py` after triage — duplicate tickets end flow, unique tickets proceed
+- Verified: TICK005 correctly flagged as duplicate of TICK001 (score 0.88), TICK002 and TICK003 correctly identified as unique
+
+> **Threshold:** `0.8` cosine similarity. Mock data updated — TICK005 description aligned to TICK001 to simulate real duplicate submission.
 
 ---
 
@@ -208,6 +216,23 @@ Five human checkpoints ensure no consequential action happens without sign-off:
 
 ## Changelog
 
+### v0.3.0 — 2026-06-11
+**Phase 3 complete — Duplicate Detection Agent**
+
+- Implemented `DuplicateAgentState` TypedDict with full embedding and similarity schema
+- Built 5 LangChain tools: `get_ticket`, `embed_text`, `store_embeddings`, `similarity_search`, `write_duplicate_result`
+- Implemented 5 nodes: `fetch_ticket_node`, `store_embeddings_node`, `embed_ticket_node`, `similarity_node`, `write_result_node`
+- Integrated `all-MiniLM-L6-v2` via `sentence-transformers` as local embedding model — no API cost, 384 dimensions
+- Set up local MongoDB as vector store — embeddings stored and queried from `ticket_embeddings` collection via `pymongo`
+- Implemented upsert strategy in `store_embeddings` — fresh embeddings on every run, no stale data
+- Fixed self-match bug — two-layer guard: incoming ticket deleted from MongoDB in `store_embeddings` and skipped in `similarity_search` loop
+- Added `current_ticket_id` parameter to `similarity_search` as second safety net against self-matching
+- Enabled LangGraph streaming via `graph.stream(stream_mode="updates")` — real-time node completion events with state diffs
+- Updated mock data — TICK005 description aligned to TICK001 for realistic duplicate submission scenario
+- Wired duplicate agent into `main_graph.py` after triage — conditional edge: duplicate → END, unique → context package (pending Phase 4)
+- Verified all test cases: TICK005 flagged as duplicate of TICK001 (score 0.88), TICK002 and TICK003 correctly unique
+- Updated `tests/test_triage.py` and added `tests/test_duplicate.py` with streaming output and `sys.path` fix for `tests/` subdirectory
+
 ### v0.2.0 — 2026-06-09
 **Phase 2 complete — Triage Agent**
 
@@ -245,8 +270,6 @@ agenticnow/
 ├── requirements.txt
 ├── langgraph.json
 ├── config.py
-├── test_triage.py
-├── test_main.py
 ├── my_agent/
 │   ├── __init__.py
 │   ├── main_graph.py
@@ -257,7 +280,11 @@ agenticnow/
 │   │   ├── nodes.py
 │   │   └── tools.py
 │   ├── duplicate_agent/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── agent.py
+│   │   ├── state.py
+│   │   ├── nodes.py
+│   │   └── tools.py
 │   ├── context_package_agent/
 │   │   └── __init__.py
 │   ├── router_agent/
@@ -272,8 +299,11 @@ agenticnow/
 │   ├── __init__.py
 │   ├── servicenow_client.py
 │   └── mock_servicenow_client.py
-└── db/
-    └── checkpoint.py
+├── db/
+│   └── checkpoint.py
+└── tests/
+    ├── test_triage.py
+    └── test_duplicate.py
 ```
 
 ---
@@ -284,9 +314,10 @@ agenticnow/
 |---|---|
 | Agent orchestration | LangGraph (StateGraph, multi-agent subgraphs) |
 | LLM | Cohere `command-r-plus` (via `langchain-cohere`) |
+| Embeddings | `all-MiniLM-L6-v2` via `sentence-transformers` (local, no API cost) |
+| Vector store | MongoDB local (via `pymongo`) — `ticket_embeddings` collection |
 | Platform | ServiceNow PDI (pending availability) / Mock client (active) |
 | Backend | FastAPI (wired in Phase 9) |
-| Vector search | pgvector / Supabase |
 | Memory & state | LangGraph checkpointer (PostgreSQL — activated Phase 5) |
 | Notifications | ServiceNow webhooks + email |
 | External integrations | Active Directory / Okta APIs (mocked for demo) |
